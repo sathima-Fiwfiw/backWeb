@@ -12,11 +12,29 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5" // <---- NEW IMPORT
 )
 
+// JWT Config and Structs
+// ต้องกำหนด Secret Key ที่มีความยาวและซับซ้อน (ดึงจาก ENV หรือใช้ค่าตั้งต้น)
+var jwtKey = []byte(envOr("JWT_SECRET", "a-very-secret-key-that-must-be-changed-in-production"))
+
+// MyClaims กำหนดข้อมูลที่จะใส่ใน JWT Payload
+type MyClaims struct {
+	UserID int    `json:"user_id"`
+	Role   string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+// AuthResponse คือโครงสร้างที่ Frontend คาดหวัง
+type AuthResponse struct {
+	Token string `json:"token"`
+	Role  string `json:"role"`
+}
+
 type App struct {
-	Users      *models.UserModel
-	UploadDir  string
+	Users       *models.UserModel
+	UploadDir   string
 	AllowOrigin string // CORS Origin
 }
 
@@ -29,12 +47,12 @@ func New(app *App) http.Handler {
 
 	r := chi.NewRouter()
 
-	// --- CORS แบบง่าย ใช้กับ Angular ---
+	// --- CORS Middleware ---
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			origin := app.AllowOrigin
 			if origin == "" {
-				origin = "*" // ปลอดภัยกว่าคือใส่ http://localhost:4200
+				origin = "*"
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -54,7 +72,7 @@ func New(app *App) http.Handler {
 
 	// ========= /api =========
 	r.Route("/api", func(r chi.Router) {
-		// POST /api/register  (multipart/form-data)
+		// POST /api/register (multipart/form-data)
 		r.Post("/register", func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB
 				writeErr(w, http.StatusBadRequest, "invalid form: "+err.Error())
@@ -90,7 +108,6 @@ func New(app *App) http.Handler {
 					writeErr(w, http.StatusInternalServerError, "cannot write file")
 					return
 				}
-				// เส้นทาง public (ปรับตามจริง ถ้าเสิร์ฟเป็น static ให้ชี้ URL)
 				avatarURL = "/" + filepath.ToSlash(dstPath)
 			}
 
@@ -100,6 +117,57 @@ func New(app *App) http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusCreated, u)
+		})
+
+		// POST /api/login (application/json) <---- NEW LOGIN HANDLER
+		r.Post("/login", func(w http.ResponseWriter, r *http.Request) {
+			var creds struct {
+				Email    string `json:"email"`
+				Password string `json:"password"`
+			}
+
+			if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+
+			if creds.Email == "" || creds.Password == "" {
+				writeErr(w, http.StatusBadRequest, "email and password required")
+				return
+			}
+
+			// 1. ตรวจสอบผู้ใช้
+			user, err := app.Users.Authenticate(r.Context(), creds.Email, creds.Password)
+			if err != nil {
+				writeErr(w, http.StatusUnauthorized, "login failed: "+err.Error())
+				return
+			}
+
+			// 2. สร้าง JWT Token
+			expirationTime := time.Now().Add(24 * time.Hour) // Token มีอายุ 24 ชม.
+			claims := &MyClaims{
+				UserID: user.ID,
+				Role:   user.Role,
+				RegisteredClaims: jwt.RegisteredClaims{
+					ExpiresAt: jwt.NewNumericDate(expirationTime),
+					IssuedAt:  jwt.NewNumericDate(time.Now()),
+				},
+			}
+
+			token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+			tokenString, err := token.SignedString(jwtKey)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, "could not create token")
+				return
+			}
+
+			// 3. ส่ง AuthResponse กลับไป
+			res := AuthResponse{
+				Token: tokenString,
+				Role:  user.Role,
+			}
+
+			writeJSON(w, http.StatusOK, res)
 		})
 	})
 
@@ -119,4 +187,12 @@ func slugify(s string) string {
 	s = strings.TrimSpace(s)
 	repl := strings.NewReplacer(" ", "_", "/", "-", "\\", "-", ":", "-", "|", "-")
 	return repl.Replace(s)
+}
+
+// Helper function envOr ที่ถูกคัดลอกมาจาก main.go เพื่อให้ router.go สามารถใช้งานได้
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }

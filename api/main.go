@@ -7,26 +7,22 @@ import (
 	"log"
 	"net/http"
 	"os"
+
+	"github.com/joho/godotenv" // เพิ่ม
 )
 
 func main() {
-	// ENV ที่ควรตั้ง:
-	// MYSQL_DSN="user:pass@tcp(127.0.0.1:3306)/mydb?parseTime=true&charset=utf8mb4"
-	// HTTP_ADDR=":8080"
-	// CORS_ORIGIN="http://localhost:4200"  (ถ้าทดสอบกับ Angular)
-	// UPLOAD_DIR="uploads/avatars"
+	_ = godotenv.Load() // โหลด .env ถ้ามี
 
 	db := database.MustOpen()
 	defer db.Close()
 
 	userModel := &models.UserModel{DB: db}
-
 	app := &router.App{
 		Users:       userModel,
 		UploadDir:   envOr("UPLOAD_DIR", "uploads/avatars"),
 		AllowOrigin: os.Getenv("CORS_ORIGIN"),
 	}
-
 	r := router.New(app)
 
 	addr := envOr("HTTP_ADDR", ":8080")

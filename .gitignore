@@ -1,0 +1,13 @@
+# ห้ามเอาขึ้น Git
+.env
+
+# แนะนำ (โปรเจกต์ Go + อัปโหลดรูป)
+uploads/
+*.log
+
+# VS Code
+.vscode/
+
+# macOS/Windows ไฟล์ระบบที่ไม่จำเป็น
+.DS_Store
+Thumbs.db
