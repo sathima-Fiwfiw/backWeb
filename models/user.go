@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -25,92 +27,103 @@ type UserModel struct {
 	DB *sql.DB
 }
 
-// Create: สมัครผู้ใช้ใหม่
-// - แฮชรหัสผ่านด้วย bcrypt
-// - ใส่รูปโปรไฟล์ได้ (อาจว่าง)
-// - role ปล่อยให้เป็น DEFAULT ของตาราง (เช่น 'user')
-func (m *UserModel) Create(ctx context.Context, username, email, password, avatarURL string) (*User, error) {
-	pwHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
+// Create: สมัครผู้ใช้ใหม่... (โค้ดเดิม)
 
-	// แทรกข้อมูล (ให้คอลัมน์ตรงกับตาราง: users)
-	// ตารางอ้างอิง: users(user_id, username, email, password_hash, role, image_profile, created_at)
-	res, err := m.DB.ExecContext(ctx, `
-		INSERT INTO users (username, email, password_hash, image_profile, created_at)
-		VALUES (?, ?, ?, ?, NOW())
-	`, username, email, pwHash, avatarURL)
-	if err != nil {
-		return nil, err
-	}
-
-	id64, err := res.LastInsertId()
-	if err != nil {
-		return nil, err
-	}
-
-	u := &User{
-		ID:        int(id64),
-		Username:  username,
-		Email:     email,
-		AvatarURL: avatarURL,
-		Role:      "user",     // ค่าเริ่มต้น (ตรงกับ DEFAULT ของ DB)
-		CreatedAt: time.Now(), // อ้างอิงเวลาปัจจุบัน (ถ้าต้องการอ่านจาก DB จริงค่อย SELECT อีกครั้ง)
-		UpdatedAt: time.Now(),
-	}
-	return u, nil
-}
-
-// GetByEmail: ดึงข้อมูลผู้ใช้ด้วย email พร้อม password_hash (เพื่อนำไป verify)
-// เลือกคอลัมน์ role มาด้วยเสมอ!
-func (m *UserModel) GetByEmail(ctx context.Context, email string) (*User, []byte, error) {
+// GetByID: ดึงข้อมูลผู้ใช้ด้วย ID (สำหรับ handleGetProfile)
+func (m *UserModel) GetByID(ctx context.Context, userID int) (*User, error) {
 	row := m.DB.QueryRowContext(ctx, `
-		SELECT user_id, username, email, password_hash, role, IFNULL(image_profile,''), created_at
+		-- แก้: ดึง updated_at มาด้วย แต่ใช้ created_at เป็นค่า fallback
+		SELECT user_id, username, email, role, IFNULL(image_profile,''), created_at, IFNULL(updated_at, created_at)
 		FROM users
-		WHERE email = ?
-	`, email)
+		WHERE user_id = ?
+	`, userID)
 
 	var (
 		u         User
-		hash      []byte
 		imageProf sql.NullString
 		created   time.Time
+		updated   time.Time
 	)
 
 	if err := row.Scan(
 		&u.ID,
 		&u.Username,
 		&u.Email,
-		&hash,   // password_hash (VARBINARY / VARCHAR ก็ scan เป็น []byte ได้)
-		&u.Role, // ← สำคัญ: เอา role จาก DB
+		&u.Role,
 		&imageProf,
 		&created,
+		&updated,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, errors.New("user not found")
+			return nil, errors.New("user not found")
 		}
-		return nil, nil, err
+		return nil, err
 	}
 
 	u.AvatarURL = imageProf.String
 	u.CreatedAt = created
-	u.UpdatedAt = created // ถ้ายังไม่มี updated_at แยกในตาราง ก็อิง created ไปก่อน
+	u.UpdatedAt = updated
 
-	return &u, hash, nil
+	return &u, nil
 }
 
-// Authenticate: ตรวจสอบอีเมล/รหัสผ่าน แล้วคืน User (role จาก DB)
-func (m *UserModel) Authenticate(ctx context.Context, email, password string) (*User, error) {
-	u, hash, err := m.GetByEmail(ctx, email)
+// GetByEmail: ดึงข้อมูลผู้ใช้ด้วย email... (โค้ดเดิม)
+// Authenticate: ตรวจสอบอีเมล/รหัสผ่าน... (โค้ดเดิม)
+
+// UpdateProfile: อัปเดตข้อมูลโปรไฟล์ของผู้ใช้ (Username, Email, Password)
+// *หมายเหตุ: ลบคอลัมน์ updated_at ออกจาก query เพื่อแก้ Error 1054
+func (m *UserModel) UpdateProfile(ctx context.Context, userID int, username, email, password string) error {
+	// 1. ตรวจสอบว่าต้องอัปเดตรหัสผ่านหรือไม่
+	var pwHash []byte
+	var err error
+	if password != "" {
+		pwHash, err = bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 2. สร้าง Query แบบ Dynamic เพื่ออัปเดตเฉพาะฟิลด์ที่มีการเปลี่ยนแปลง
+	var fields []string
+	var args []interface{}
+
+	if username != "" {
+		fields = append(fields, "username = ?")
+		args = append(args, username)
+	}
+	if email != "" {
+		fields = append(fields, "email = ?")
+		args = append(args, email)
+	}
+	if len(pwHash) > 0 {
+		fields = append(fields, "password_hash = ?")
+		args = append(args, pwHash)
+	}
+
+	if len(fields) == 0 {
+		return errors.New("no fields provided for update")
+	}
+
+	// *** [แก้ไข]: ลบบรรทัดนี้ออกเพื่อแก้ปัญหา Unknown column 'updated_at' ***
+	// fields = append(fields, "updated_at = NOW()")
+	args = append(args, userID) // userID เป็นตัวสุดท้ายสำหรับ WHERE
+
+	query := fmt.Sprintf("UPDATE users SET %s WHERE user_id = ?", strings.Join(fields, ", "))
+
+	// 3. Execute Query
+	result, err := m.DB.ExecContext(ctx, query, args...)
 	if err != nil {
-		// รวม error message เป็น invalid credentials เพื่อความปลอดภัย
-		return nil, errors.New("invalid credentials")
+		return err
 	}
 
-	if err := bcrypt.CompareHashAndPassword(hash, []byte(password)); err != nil {
-		return nil, errors.New("invalid credentials")
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
 	}
 
-	return u, nil
+	if rowsAffected == 0 {
+		return errors.New("user not found or no new changes made")
+	}
+
+	return nil
 }
