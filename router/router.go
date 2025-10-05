@@ -12,7 +12,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+<<<<<<< HEAD
 	"github.com/golang-jwt/jwt/v5"
+=======
+	"github.com/golang-jwt/jwt/v5" // <---- NEW IMPORT
+>>>>>>> 3538e17ad9e714499c6c65b68497e2fdaeb0071d
 )
 
 // JWT Config and Structs
@@ -119,7 +123,11 @@ func New(app *App) http.Handler {
 			writeJSON(w, http.StatusCreated, u)
 		})
 
+<<<<<<< HEAD
 		// POST /api/login (application/json) — ใช้ DB อย่างเดียว
+=======
+		// POST /api/login (application/json) <---- NEW LOGIN HANDLER
+>>>>>>> 3538e17ad9e714499c6c65b68497e2fdaeb0071d
 		r.Post("/login", func(w http.ResponseWriter, r *http.Request) {
 			var creds struct {
 				Email    string `json:"email"`
@@ -130,23 +138,39 @@ func New(app *App) http.Handler {
 				writeErr(w, http.StatusBadRequest, "invalid request body")
 				return
 			}
+<<<<<<< HEAD
+=======
+
+>>>>>>> 3538e17ad9e714499c6c65b68497e2fdaeb0071d
 			if creds.Email == "" || creds.Password == "" {
 				writeErr(w, http.StatusBadRequest, "email and password required")
 				return
 			}
 
+<<<<<<< HEAD
 			// 1) ตรวจสอบผู้ใช้จาก DB (ต้องสมัครก่อน)
+=======
+			// 1. ตรวจสอบผู้ใช้
+>>>>>>> 3538e17ad9e714499c6c65b68497e2fdaeb0071d
 			user, err := app.Users.Authenticate(r.Context(), creds.Email, creds.Password)
 			if err != nil {
 				writeErr(w, http.StatusUnauthorized, "login failed: "+err.Error())
 				return
 			}
 
+<<<<<<< HEAD
 			// 2) สร้าง JWT ใส่ Role จาก DB
 			expirationTime := time.Now().Add(24 * time.Hour)
 			claims := &MyClaims{
 				UserID: user.ID,
 				Role:   user.Role, // สำคัญ: คืน role จาก DB
+=======
+			// 2. สร้าง JWT Token
+			expirationTime := time.Now().Add(24 * time.Hour) // Token มีอายุ 24 ชม.
+			claims := &MyClaims{
+				UserID: user.ID,
+				Role:   user.Role,
+>>>>>>> 3538e17ad9e714499c6c65b68497e2fdaeb0071d
 				RegisteredClaims: jwt.RegisteredClaims{
 					ExpiresAt: jwt.NewNumericDate(expirationTime),
 					IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -160,11 +184,21 @@ func New(app *App) http.Handler {
 				return
 			}
 
+<<<<<<< HEAD
 			// 3) ส่ง AuthResponse กลับไป
 			writeJSON(w, http.StatusOK, AuthResponse{
 				Token: tokenString,
 				Role:  user.Role, // ส่ง role ให้ FE ใช้นำทาง
 			})
+=======
+			// 3. ส่ง AuthResponse กลับไป
+			res := AuthResponse{
+				Token: tokenString,
+				Role:  user.Role,
+			}
+
+			writeJSON(w, http.StatusOK, res)
+>>>>>>> 3538e17ad9e714499c6c65b68497e2fdaeb0071d
 		})
 	})
 
