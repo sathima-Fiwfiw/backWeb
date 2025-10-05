@@ -10,4 +10,8 @@ uploads/
 
 # macOS/Windows ไฟล์ระบบที่ไม่จำเป็น
 .DS_Store
+<<<<<<< HEAD
 Thumbs.db
+=======
+Thumbs.db
+>>>>>>> dc9112aacad3e86b3313323565dd0925e7a7574c
